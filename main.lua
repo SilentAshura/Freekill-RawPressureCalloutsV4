@@ -7,7 +7,6 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- Core state tracking
 local isScriptActive = true
 local isAlive = false
 local hasDiedOnce = false
@@ -15,7 +14,6 @@ local connections = {}
 local branchConnections = {}
 local scriptStartTime = os.clock()
 
--- Settings state
 local ambienceEnabled = false
 local warningsEnabled = true
 local timestampsEnabled = true
@@ -24,10 +22,8 @@ local teleportMessagesEnabled = true
 local menuKeybind = Enum.KeyCode.N
 local isBindingKey = false
 
--- Forward declarations for programmatic UI updaters
 local updateAmbienceUI, updateWarningsUI, updateTimestampsUI, updateDeathReviveUI, updateTeleportUI
 
--- Cooldown & Anti-Repeat tracking
 local lastMessageTime = 0
 local COOLDOWN_DURATION = 0.5
 local lastSentMessages = {}
@@ -36,14 +32,12 @@ local lastDivinerootCalloutTime = 0
 local lastTeleportMsgTime = 0
 local TELEPORT_COOLDOWN = 5
 
--- Entity Spam Tracker Data
 local entitySpawnHistory = {}
 local lastSpamWarningTime = {}
-local SPAM_TIME_WINDOW = 8  -- Time window in seconds (5-10s)
-local SPAM_THRESHOLD = 3    -- Triggered when spawns > 3 in time window
-local SPAM_COOLDOWN = 10     -- 10-second cooldown per entity for spam messages
+local SPAM_TIME_WINDOW = 8
+local SPAM_THRESHOLD = 3
+local SPAM_COOLDOWN = 10
 
--- Plural names dictionary for spam messages
 local entityPlurals = {
     ["Angler"] = "Anglers",
     ["Frogger"] = "Frogers",
@@ -64,7 +58,6 @@ local spamMessages = {
     "Okay, what is going on? That's way too many %s!"
 }
 
--- Anti-repeat message selector
 local function getRandomMessage(messageList, poolKey)
     if #messageList <= 1 then return messageList[1] end
     local choice
@@ -76,7 +69,6 @@ local function getRandomMessage(messageList, poolKey)
     return choice
 end
 
--- Dynamic chat channel detection
 local rbxGeneralChannel
 local legacyChatEvents
 
@@ -131,7 +123,7 @@ local deathMessages = {
     "I'm out... goodluck lads.",
     "Good luck, you guys... I'm finished.",
     "AHHHHHHHHHHHH!",
-    "Aw Shee-",
+    "Aww Shee-",
     "AH FAHH-",
     "Thank god. I'm tired of being the noisest person in the room.",
     "Malas Suwerte."
@@ -151,11 +143,11 @@ local reviveMessages = {
 }
 
 local teleportMessages = {
-    "Ugh, my stomach... I absolutely hate teleporting.",
+    "Ugh, my stomach... I absolutely hate fast travel.",
     "Did we really have to warp like that? I feel nauseous.",
     "I despise molecular transport. Next time, let's just walk.",
     "Great, another spatial jump. I think I left my lunch in the previous room.",
-    "Can we stop zipping around? My head is spinning from that teleport."
+    "Can we stop zipping around? My head is spinning from that fast mation."
 }
 
 local charConnections = {}
@@ -183,11 +175,9 @@ local function setupCharacter(character)
                 lastDeathOrReviveTime = now
                 isAlive = true
                 
-                ambienceEnabled = true
                 warningsEnabled = true
                 timestampsEnabled = true
                 
-                if updateAmbienceUI then updateAmbienceUI(true) end
                 if updateWarningsUI then updateWarningsUI(true) end
                 if updateTimestampsUI then updateTimestampsUI(true) end
 
@@ -265,7 +255,7 @@ local function setupCharacter(character)
                 local currentPos = hrp.Position
                 local dist = (currentPos - lastPos).Magnitude
                 
-                if dist > 40 and teleportMessagesEnabled then
+                if dist > 100 and teleportMessagesEnabled then
                     local tNow = os.clock()
                     if tNow - lastTeleportMsgTime > TELEPORT_COOLDOWN and (tNow - lastDeathOrReviveTime) >= 10 then
                         lastTeleportMsgTime = tNow
@@ -293,7 +283,7 @@ local callouts = {
         {name = "ENTITY", branch = "ENTITY"},
         {name = "RETREAT", messages = {"Move back!", "Back away!", "Retreat!", "Fall back!", "Get out of there!"}},
         {name = "MOVE", messages = {"Go! Go! Go!", "Mooove out!", "Hurry it up!", "Make haste!", "Keep pushing forward!"}},
-        {name = "OBJECTIVE", messages = {"Do something!", "Mind the objectives", "Do the tasks!", "Is that taking forever or what?", "Focus on the objective!"}},
+        {name = "OBJECTIVE", messages = {"Go and do the objectives", "Mind the objectives", "Do the objectives!", "Is that taking forever or what?", "Focus on the objective!"}},
         {name = "ITEM", branch = "ITEM"},
         {name = "LOOKOUT", branch = "LOOKOUT"},
         {name = "HELP", messages = {"Heeelp me!", "I need help over here!", "HELP!", "I need a hand over here!", "I'm in trouble!"}},
@@ -313,18 +303,18 @@ local callouts = {
     ITEM = {
         {name = "Lights", messages = {"We need a light source", "Where's the lights?", "Light it up!", "Light up, it's getting dark", "Light up the place, will yeah?"}},
         {name = "Medical", messages = {"I'm hurt badly!", "I need a medic!", "Where the bloody crocus?", "Wait up, someone's hurt!", "Hey lads, someone needs medical!"}},
-        {name = "Card", messages = {"Card!", "Where's the card at?", "Pass the card!", "We got a locked door!", "We need a keycard!"}},
+        {name = "Card", messages = {"Card?", "Where's the card at?", "Pass the card!", "We got a locked door!", "We need a keycard!"}},
         {name = "Other", messages = {"Found something?", "Search these rooms, might be something we can use", "Spare items?", "Look for supplies!", "Hey, check out this area!"}},
     },
     LOOKOUT = {
         {name = "Item", messages = {"Item over here!", "Hey, check this out", "Yo, take this", "Hey lads, I found an item!", "We got gear here!"}},
-        {name = "Monster", messages = {"I sense a dark presence", "Danger is lurking", "Watch it", "Watch out, bad presence!", "Heads up, danger ahead!"}},
+        {name = "Monster", messages = {"I sense a dark presence", "Danger is lurking around these parts", "Watch out for danger, will ya'?", "Watch it, lads!", "Heads up, danger ahead!"}},
     },
     MISCELLANEOUS = {
-        {name = "Nervous", messages = {"Did you feel that vibration?", "I got a bad feeling about this area...", "It's way too quiet in here", "My hands won't stop shaking", "Something is watching us, I know it"}},
-        {name = "Relief", messages = {"Phew, that was way too close!", "I think we actually lost it", "Is everybody still alive?", "It passed... okay, deep breaths", "Made it through that one in one piece!"}},
-        {name = "Motivation", messages = {"We can actually make it out of here!", "Don't give up now, keep pushing!", "Keep your chin up, we're surviving!", "We've made it this far, don't stop now!", "Stay sharp! We can beat this place!"}},
-        {name = "Observations", messages = {"Keep your eyes peeled", "Watch your step around here", "Stay aware of your surroundings", "Check the corners, don't miss anything", "Keep an eye out for details"}},
+        {name = "Hide", messages = {"FIND A LOCKER, QUICKLY!", "FIND A HIDNG SPOT NOW!", "THAT'S NOT GOOD! HIDE!", "AHH HELL, FIND A SAFE SPOT!", "WE NEED TO HIDE, NOW!"}},
+        {name = "Foreshadow", messages = {"Did you feel that vibration?", "I got a bad feeling about this area...", "It's way too quiet in here", "My hands won't stop shaking", "Something is here, I know it"}},
+        {name = "Relief", messages = {"Phew, that was way too close! Y'all good?", "I think we actually lost it, are y'all alright?", "Is everybody still alive?", "It passed... okay, do head count.", "Made it through that one in one piece! Now, anyone dead?"}},
+        {name = "Motivation", messages = {"We can actually make it out of here!", "Don't give up now, keep going!", "Keep your chin up, we're surviving!", "We've made it this far, don't stop now!", "Stay sharp! We can beat this place!"}},
         {name = "Waiting", messages = {"Are we moving or what?", "I'm not standing around waiting to die", "Let's get a move on", "Move it, we're sitting ducks here!", "Hurry up, time is ticking!"}}
     }
 }
@@ -355,10 +345,10 @@ local ambientDialogues = {
 local bickerLines = {
     AmbienceOff = {
         "[Hushed] Alright, keeping my mouth shut for a while.",
-        "[Hushed] Zipping my lips. Hope you like the quiet.",
-        "[Hushed] Saving my breath from now on.",
+        "[Hushed] I'll stop talking about uneeded stuff for a bit..",
+        "[Hushed] Saving my breath for now.",
         "[Hushed] Going quiet. No more useless chatter.",
-        "[Hushed] Zipping it. Focus on surviving, not talking."
+        "[Hushed] Fine, I'll focus on surviving, not yapping."
     },
     AmbienceOn = {
         "[Chatter] Silence is getting uncomfortable. Back to talking.",
@@ -395,18 +385,18 @@ local bickerLines = {
         "[Tracking] Timestamps back on. Stay aware of the hours."
     },
     DeathReviveOff = {
-        "[Hushed] Keeping quiet about my own condition for now.",
-        "[Hushed] Won't be shouting if I drop or get revived.",
-        "[Hushed] Stopping updates on my personal status.",
-        "[Hushed] If I go down, I'll just suffer in silence.",
-        "[Hushed] Silencing my own death and revive callouts."
+        "[Silenced] Keeping quiet about my own condition for now.",
+        "[Silenced] Won't be shouting if I drop or get revived.",
+        "[Silenced] Stopping updates on my personal status.",
+        "[Silenced] If I go down, no one will hear me.",
+        "[Silenced] Silencing my own death and revive callouts."
     },
     DeathReviveOn = {
-        "[Chatter] I'll let everyone know if I take a fatal hit.",
-        "[Chatter] Status alerts on. I'll shout if I'm downed or revived.",
-        "[Chatter] Back to reporting when I go down or get back on my feet.",
-        "[Chatter] Expect a holler from me if I end up biting the dust.",
-        "[Chatter] Keeping you posted on whether I'm alive or kicking."
+        "[Foreshadow] I'll let everyone know if I take a fatal hit.",
+        "[Foreshadow] Status alerts on. I'll shout if I'm downed or revived.",
+        "[Foreshadow] Back to reporting when I go down or get back on my feet.",
+        "[Foreshadow] Expect a holler from me if I end up biting the dust.",
+        "[Foreshadow] Keeping you posted on whether I'm alive or kicking."
     },
     TeleportOff = {
         "[Relieved] Keeping my complaints about warp jumps to myself.",
@@ -840,8 +830,7 @@ local entityKeywords = {
     {"eyefesthurt", "Eyefestation"}, {"eyefestationcameraeffect", "Eyefestation"}, 
     {"eyefestveins", "Eyefestation"}, {"eyefestcircle", "Eyefestation"},
     {"divineroot", "Wall Dweller"}, {"di-vine-root", "Wall Dweller"},
-    {"dweller", "Wall Dweller"}, {"walldweller", "Wall Dweller"}, 
-    {"dwellermodel", "Wall Dweller"}, {"dwellerspooked", "Wall Dweller"}, {"spooked", "Wall Dweller"},
+    {"dweller", "Wall Dweller"}, {"walldweller", "Wall Dweller"}, {"dwellermodel", "Wall Dweller"},
     {"pipsqueak", "Special"}, {"pipsqeuak", "Special"}, {"a60", "Special"}, {"bleach", "Special"}, {"a200", "Special"}
 }
 
@@ -851,7 +840,6 @@ local function onEntitySpawned(child)
     local lowerName = string.lower(child.Name)
     local now = os.clock()
 
-    -- Explicit cooldowns for Eyefestation & Wall Dweller
     if lowerName:find("eyefest") or lowerName:find("eyefestation") then
         if now - lastEyefestCalloutTime < 30 then return end
         lastEyefestCalloutTime = now
@@ -862,7 +850,6 @@ local function onEntitySpawned(child)
         lastDivinerootCalloutTime = now
     end
 
-    -- Identify Entity Category
     local targetCategory = nil
     for _, mapping in ipairs(entityKeywords) do
         if string.find(lowerName, mapping[1]) then
@@ -873,14 +860,12 @@ local function onEntitySpawned(child)
 
     if not targetCategory then return end
 
-    -- Manage Entity Spawn History for Multi-Spawn Detection
     if not entitySpawnHistory[targetCategory] then
         entitySpawnHistory[targetCategory] = {}
     end
 
     local history = entitySpawnHistory[targetCategory]
     
-    -- Clean timestamps older than the spam window (8 seconds)
     for i = #history, 1, -1 do
         if now - history[i] > SPAM_TIME_WINDOW then
             table.remove(history, i)
@@ -889,7 +874,6 @@ local function onEntitySpawned(child)
     
     table.insert(history, now)
 
-    -- Determine whether to output standard warning or multi-spawn reaction
     local rawMsg = nil
     local lastSpam = lastSpamWarningTime[targetCategory] or 0
 
@@ -970,7 +954,7 @@ task.defer(function()
                 onEntitySpawned(d) 
             end
         end))
-    end -- Properly closed checkRoomForEntities
+    end
 
     for _, room in ipairs(roomsFolder:GetChildren()) do
         task.defer(function() checkRoomForEntities(room) end)
