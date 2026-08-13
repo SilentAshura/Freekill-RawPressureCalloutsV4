@@ -15,20 +15,66 @@ local connections = {}
 local branchConnections = {}
 local scriptStartTime = os.clock()
 
--- Settings state (ON by default)
+-- Settings state
 local ambienceEnabled = false
 local warningsEnabled = true
 local timestampsEnabled = true
+local deathReviveEnabled = true
+local teleportMessagesEnabled = true
 local menuKeybind = Enum.KeyCode.N
 local isBindingKey = false
 
 -- Forward declarations for programmatic UI updaters
-local updateAmbienceUI, updateWarningsUI, updateTimestampsUI
+local updateAmbienceUI, updateWarningsUI, updateTimestampsUI, updateDeathReviveUI, updateTeleportUI
 
 -- Cooldown & Anti-Repeat tracking
 local lastMessageTime = 0
 local COOLDOWN_DURATION = 0.5
 local lastSentMessages = {}
+local lastEyefestCalloutTime = 0 
+local lastDivinerootCalloutTime = 0 
+local lastTeleportMsgTime = 0
+local TELEPORT_COOLDOWN = 5
+
+-- Entity Spam Tracker Data
+local entitySpawnHistory = {}
+local lastSpamWarningTime = {}
+local SPAM_TIME_WINDOW = 8  -- Time window in seconds (5-10s)
+local SPAM_THRESHOLD = 3    -- Triggered when spawns > 3 in time window
+local SPAM_COOLDOWN = 10     -- 10-second cooldown per entity for spam messages
+
+-- Plural names dictionary for spam messages
+local entityPlurals = {
+    ["Angler"] = "Anglers",
+    ["Frogger"] = "Frogers",
+    ["Blitz"] = "Blitzes",
+    ["Chainsmokeys"] = "Chainsmokeys",
+    ["Pinkie"] = "Pinkies",
+    ["Pandemonium"] = "Pandemoniums",
+    ["Eyefestation"] = "Eyefestations",
+    ["Wall Dweller"] = "Wall Dwellers",
+    ["Special"] = "Specials"
+}
+
+local spamMessages = {
+    "Why the hell are there so many %s spawning?!",
+    "Are you kidding me? How many %s are going to show up?!",
+    "More %s?! The game is spamming them at us!",
+    "Seriously, why are there so many %s coming all at once?!",
+    "Okay, what is going on? That's way too many %s!"
+}
+
+-- Anti-repeat message selector
+local function getRandomMessage(messageList, poolKey)
+    if #messageList <= 1 then return messageList[1] end
+    local choice
+    repeat
+        choice = messageList[math.random(1, #messageList)]
+    until choice ~= lastSentMessages[poolKey]
+    
+    lastSentMessages[poolKey] = choice
+    return choice
+end
 
 -- Dynamic chat channel detection
 local rbxGeneralChannel
@@ -76,46 +122,65 @@ local function sendChatMessage(message)
 end
 
 -- ==========================================
--- 💀 DEATH & REVIVAL LOGIC
+-- 💀 DEATH, REVIVAL, & TELEPORT LOGIC
 -- ==========================================
 local deathMessages = {
     "I'm done for... keep moving without me!",
-    "They got me... don't let 'em get you...",
+    "They got me!",
     "Agh, this is it... save yourselves!",
     "I'm out... goodluck lads.",
-    "Good luck, you guys... I'm finished."
+    "Good luck, you guys... I'm finished.",
+    "AHHHHHHHHHHHH!",
+    "Aw Shee-",
+    "AH FAHH-",
+    "Thank god. I'm tired of being the noisest person in the room.",
+    "Malas Suwerte."
 }
 
 local reviveMessages = {
-    "Whoa, thought I was a goner. Thanks for the save.",
+    "Whoa, thought I was a goner.",
     "I'm back! Let's make 'em pay for that.",
-    "Ah, my head... alright, I owe you one.",
+    "Ah, my head... alright, lets rock.",
     "I ain't dead yet! Hand me a flashlight.",
-    "Back on my feet. Let's get out of this hellhole."
+    "Back on my feet. Let's get out of this hellhole.",
+    "Well, this is better than six feet below, I guess.",
+    "Lady Death does not like me down there.",
+    "I was busy chatting with the ghosts, bummer.",
+    "I was just playing dead, you know? No? Forget it then.",
+    "I was planning on ghosting, but alright."
+}
+
+local teleportMessages = {
+    "Ugh, my stomach... I absolutely hate teleporting.",
+    "Did we really have to warp like that? I feel nauseous.",
+    "I despise molecular transport. Next time, let's just walk.",
+    "Great, another spatial jump. I think I left my lunch in the previous room.",
+    "Can we stop zipping around? My head is spinning from that teleport."
 }
 
 local charConnections = {}
 local lastStateChangeTime = 0
-local STATE_CHANGE_COOLDOWN = 3 -- Cooldown between state transitions
+local lastDeathOrReviveTime = 0
+local STATE_CHANGE_COOLDOWN = 3 
 
 local function setupCharacter(character)
     if not character then return end
     
-    -- Clean up previous character connections to prevent memory bloat
     for _, conn in ipairs(charConnections) do
         if conn.Connected then conn:Disconnect() end
     end
     table.clear(charConnections)
 
     local humanoid = character:WaitForChild("Humanoid", 10)
+    local hrp = character:WaitForChild("HumanoidRootPart", 10)
     
     if humanoid then
         local now = os.clock()
 
-        -- Process revive only if state transition cooldown has passed
         if humanoid.Health > 0 and hasDiedOnce then
             if (now - lastStateChangeTime) >= STATE_CHANGE_COOLDOWN then
                 lastStateChangeTime = now
+                lastDeathOrReviveTime = now
                 isAlive = true
                 
                 ambienceEnabled = true
@@ -126,8 +191,10 @@ local function setupCharacter(character)
                 if updateWarningsUI then updateWarningsUI(true) end
                 if updateTimestampsUI then updateTimestampsUI(true) end
 
-                local msg = reviveMessages[math.random(1, #reviveMessages)]
-                sendChatMessage("[Back in action] " .. msg)
+                if deathReviveEnabled then
+                    local msg = getRandomMessage(reviveMessages, "REVIVE")
+                    sendChatMessage("[Back in action] " .. msg)
+                end
             end
         elseif humanoid.Health > 0 then
             isAlive = true
@@ -136,13 +203,12 @@ local function setupCharacter(character)
         local function onDeath()
             local currentTime = os.clock()
 
-            -- Require both alive state and minimum time gap since last state change
             if isAlive and (currentTime - lastStateChangeTime >= STATE_CHANGE_COOLDOWN) then
                 lastStateChangeTime = currentTime
+                lastDeathOrReviveTime = currentTime
                 isAlive = false
                 hasDiedOnce = true
                 
-                -- Silently disable settings on death
                 ambienceEnabled = false
                 warningsEnabled = false
                 timestampsEnabled = false
@@ -151,12 +217,13 @@ local function setupCharacter(character)
                 if updateWarningsUI then updateWarningsUI(false) end
                 if updateTimestampsUI then updateTimestampsUI(false) end
 
-                local msg = deathMessages[math.random(1, #deathMessages)]
-                sendChatMessage("[Dying message] " .. msg)
+                if deathReviveEnabled then
+                    local msg = getRandomMessage(deathMessages, "DEATH")
+                    sendChatMessage("[Dying message] " .. msg)
+                end
             end
         end
 
-        -- 1. Standard Roblox Death Detection
         table.insert(charConnections, humanoid.Died:Connect(onDeath))
         
         table.insert(charConnections, humanoid.HealthChanged:Connect(function(health)
@@ -165,14 +232,12 @@ local function setupCharacter(character)
             end
         end))
 
-        -- 2. Ancestry Detection (Model deleted/moved from Workspace)
         table.insert(charConnections, character.AncestryChanged:Connect(function(_, newParent)
             if not newParent or newParent ~= workspace then
                 onDeath()
             end
         end))
 
-        -- 3. Failsafe Polling Loop
         task.spawn(function()
             while isAlive and character and character.Parent and isScriptActive do
                 if not character:FindFirstChild("HumanoidRootPart") then
@@ -186,6 +251,30 @@ local function setupCharacter(character)
                 end
 
                 task.wait(1)
+            end
+        end)
+    end
+    
+    if hrp then
+        task.spawn(function()
+            local lastPos = hrp.Position
+            while isAlive and character and character.Parent and isScriptActive do
+                task.wait(0.1)
+                if not hrp or not hrp.Parent then break end
+                
+                local currentPos = hrp.Position
+                local dist = (currentPos - lastPos).Magnitude
+                
+                if dist > 40 and teleportMessagesEnabled then
+                    local tNow = os.clock()
+                    if tNow - lastTeleportMsgTime > TELEPORT_COOLDOWN and (tNow - lastDeathOrReviveTime) >= 10 then
+                        lastTeleportMsgTime = tNow
+                        local msg = getRandomMessage(teleportMessages, "TELEPORT")
+                        sendChatMessage("[Teleported] " .. msg)
+                    end
+                end
+                
+                lastPos = currentPos
             end
         end)
     end
@@ -211,19 +300,19 @@ local callouts = {
         {name = "MISCELLANEOUS", branch = "MISCELLANEOUS"},
     },
     ENTITY = {
-        {name = "Angler", messages = {"Anglerfish!", "Angler!", "We got one Angler coming!", "Watch out for Angler!", "Heads up, Angler is coming!"}},
-        {name = "Frogger", messages = {"Frogger!", "Orange fish!", "We got ourselves a Frogger!", "Watch out for that Frogger bouncing!", "Heads up for Frogger!"}},
-        {name = "Blitz", messages = {"We got a Rusher!", "Fast one!", "Bolter!", "Watch out, Blitz is rushing!", "Heads up for Blitz!"}},
-        {name = "Chainsmoker", messages = {"Smokey!", "Green one!", "Chains!", "Watch out for Chains!", "Heads up, Smokey's coming!"}},
-        {name = "Pinkie", messages = {"Pinkie!", "Pink eye!", "Pink fish!", "I can hear that pink one coming!", "Heads up for the silent one!"}},
-        {name = "Pandemonium", messages = {"Foul demon!", "Pandemonium!", "Panzer!", "Watch out for Pandemonium!", "Another minigame, huh"}},
-        {name = "Eyefestation", messages = {"Eyefestation!", "Don't look at it!", "Keep your head down!", "Don't look at it, it will fry you", "Whatever you do, do not listen to the voices"}},
-        {name = "Wall Dweller", messages = {"Wall Dweller!", "Check the walls!", "Look behind you!", "Watch out for Wall Dwellers!", "Heads up, check the corners!"}},
-        {name = "Special", messages = {"Something wicked is coming!", "A terrible one approaches!", "Special Noder!", "Watch out, something bad is coming!", "Heads up for a special!"}},
+        {name = "Angler", messages = {"Anglerfish!", "Angler!", "We got one Angler coming!", "Watch out for Angler!", "Heads up, Angler is coming!", "Classic Angler spawned."}},
+        {name = "Frogger", messages = {"Frogger!", "Orange fish!", "We got ourselves a Frogger!", "Watch out for that Frogger bouncing!", "Heads up for Frogger!", "That Orange fish is heading our way!"}},
+        {name = "Blitz", messages = {"We got a Blitz!", "Fast one! GET IN A HIDING SPOT QUICKLY!", "WE GOT BLITZ RUSHIN'!", "Watch out, Blitz is COMING!", "Heads up for Blitz!", "Blitz is approaching fast!"}},
+        {name = "Chainsmokeys", messages = {"Smokey!", "Green one!", "Chains!", "Watch out for Chains!", "Heads up, Smokey's coming!", "We got green smoke to inhale, it appears"}},
+        {name = "Pinkie", messages = {"Pinkie!", "Pink eye!", "Pink fish!", "I can hear that Pink one coming!", "Heads up for the Pink one!", "That Pink fish knows how to scream alright."}},
+        {name = "Pandemonium", messages = {"Foul demon! (Pandemonium)", "Pandemonium!", "WE GOT A PANDEMONIUM!", "Watch out for Pandemonium!", "Another minigame, huh?", "We got ourslves a Pandemonium!"}},
+        {name = "Eyefestation", messages = {"Eyefestation!", "Don't look outside the glass. That light is not the exit.", "Keep your head down!", "Don't look at it, it will fry you", "Whatever you do, do not listen to the voices", "That shark is here again, jeez."}},
+        {name = "Wall Dweller", messages = {"Wall Dweller!", "They're in the walls! Those Wall Dwellers are in the walls again!", "Another Wall Dweller. Might as well call a friend.", "Watch out for Wall Dwellers!", "Heads up, a Wall Dweller just emerged.", "Man, those Wall Dwellers sure are persistent."}},
+        {name = "Special", messages = {"Something wicked is coming!", "A terrible one approaches!", "Special Noder!", "Watch out, something bad is coming!", "Heads up for a special!", "Something is coming, and that's not a good one!"}},
     },
     ITEM = {
         {name = "Lights", messages = {"We need a light source", "Where's the lights?", "Light it up!", "Light up, it's getting dark", "Light up the place, will yeah?"}},
-        {name = "Medical", messages = {"I'm hurt badly!", "I need a medic!", "Where the bloody crocus?", "Wait up, someone's hurt!", "Hey lads, need medical!"}},
+        {name = "Medical", messages = {"I'm hurt badly!", "I need a medic!", "Where the bloody crocus?", "Wait up, someone's hurt!", "Hey lads, someone needs medical!"}},
         {name = "Card", messages = {"Card!", "Where's the card at?", "Pass the card!", "We got a locked door!", "We need a keycard!"}},
         {name = "Other", messages = {"Found something?", "Search these rooms, might be something we can use", "Spare items?", "Look for supplies!", "Hey, check out this area!"}},
     },
@@ -266,33 +355,72 @@ local ambientDialogues = {
 local bickerLines = {
     AmbienceOff = {
         "[Hushed] Alright, keeping my mouth shut for a while.",
+        "[Hushed] Zipping my lips. Hope you like the quiet.",
+        "[Hushed] Saving my breath from now on.",
         "[Hushed] Going quiet. No more useless chatter.",
         "[Hushed] Zipping it. Focus on surviving, not talking."
     },
     AmbienceOn = {
         "[Chatter] Silence is getting uncomfortable. Back to talking.",
+        "[Chatter] Too quiet around here anyway. Let's talk.",
+        "[Chatter] Alright, I'll keep the small talk going.",
         "[Chatter] Guards down, I can't stay quiet forever.",
         "[Chatter] Alright, back to keeping ourselves sane with talk."
     },
     WarningsOff = {
-        "[Careless] You're on your own for spotting things now.",
         "[Careless] Stopping entity callouts. Keep your own eyes open.",
-        "[Careless] No more warnings. Hope your ears are sharp."
+        "[Careless] You're on your own for spotting monsters for now.",
+        "[Careless] Turning off entity alerts. Don't blame me if something grabs you.",
+        "[Careless] Halting entity callouts. I think y'all know what you're doing.",
+        "[Careless] No more warnings for now. Hope your ears are sharp."
     },
     WarningsOn = {
-        "[Alert] Fine, I'll resume keeping an eye out for horrors.",
         "[Alert] Warnings back on. Don't say I didn't warn you.",
+        "[Alert] Entity tracking active again. I'll shout if I see anything.",
+        "[Alert] Keeping my eyes peeled for threats again.",
+        "[Alert] Fine, I'll resume keeping an eye out for horrors.",
         "[Alert] Re-engaging threat callouts. Watch your back."
     },
     TimestampsOff = {
-        "[Untracked] Stopping time checks. Time isn't helping us anyway.",
         "[Untracked] Done watching the clock. It only makes me anxious.",
+        "[Untracked] Clock watching off. Time doesn't matter down here anyway.",
+        "[Untracked] Stopping the timer. Ignorance is bliss.",
         "[Untracked] No more keeping track of the minutes."
     },
     TimestampsOn = {
         "[Tracking] Resuming clock watching. Every minute counts down here.",
+        "[Tracking] Timer enabled. Let's see how deep into the shift we get.",
+        "[Tracking] Clock's ticking. I'll keep an eye on the time.",
         "[Tracking] Keeping track of time again. Let's see how long we last.",
         "[Tracking] Timestamps back on. Stay aware of the hours."
+    },
+    DeathReviveOff = {
+        "[Hushed] Keeping quiet about my own condition for now.",
+        "[Hushed] Won't be shouting if I drop or get revived.",
+        "[Hushed] Stopping updates on my personal status.",
+        "[Hushed] If I go down, I'll just suffer in silence.",
+        "[Hushed] Silencing my own death and revive callouts."
+    },
+    DeathReviveOn = {
+        "[Chatter] I'll let everyone know if I take a fatal hit.",
+        "[Chatter] Status alerts on. I'll shout if I'm downed or revived.",
+        "[Chatter] Back to reporting when I go down or get back on my feet.",
+        "[Chatter] Expect a holler from me if I end up biting the dust.",
+        "[Chatter] Keeping you posted on whether I'm alive or kicking."
+    },
+    TeleportOff = {
+        "[Relieved] Keeping my complaints about warp jumps to myself.",
+        "[Relieved] Fine, I won't complain every time space bends.",
+        "[Relieved] Suppressing the urge to whine about teleporting.",
+        "[Relieved] Muting my complaints whenever we jump across rooms.",
+        "[Relieved] Swallowing my nausea quietly during teleportation."
+    },
+    TeleportOn = {
+        "[Sick] I will definitely complain next time we teleport.",
+        "[Sick] Warp reactions on. My stomach is already turning.",
+        "[Sick] Be ready to hear me groan every single time we warp.",
+        "[Sick] Spatial jumps whine re-enabled. Prepare to hear me complain.",
+        "[Sick] Teleport reactions back on. My head hurts just thinking about it."
     }
 }
 
@@ -343,17 +471,6 @@ local timestampMilestones = {
 -- ⚙️ LOGIC & FUNCTIONALITY
 -- ==========================================
 
-local function getRandomMessage(messageList, poolKey)
-    if #messageList <= 1 then return messageList[1] end
-    local choice
-    repeat
-        choice = messageList[math.random(1, #messageList)]
-    until choice ~= lastSentMessages[poolKey]
-    
-    lastSentMessages[poolKey] = choice
-    return choice
-end
-
 local unusedDialogues = {}
 local lastAmbientDialogue = nil
 
@@ -386,7 +503,7 @@ end
 -- 🎨 UI CREATION
 -- ==========================================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "CalloutsV4"
+screenGui.Name = "CalloutsV4_Extended"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
@@ -429,7 +546,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -115, 1, 0)
 titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Callouts V4"
+titleLabel.Text = "Callouts V4.2+"
 titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 16
@@ -476,6 +593,8 @@ scrollFrame.Position = UDim2.new(0, 10, 0, 45)
 scrollFrame.BackgroundTransparency = 1
 scrollFrame.ScrollBarThickness = 3
 scrollFrame.ScrollingEnabled = true
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 scrollFrame.Parent = mainFrame
 
 local listLayout = Instance.new("UIListLayout")
@@ -486,10 +605,14 @@ listLayout.Parent = scrollFrame
 -- ==========================================
 -- ⚙️ SETTINGS UI
 -- ==========================================
-local settingsFrame = Instance.new("Frame")
+local settingsFrame = Instance.new("ScrollingFrame")
 settingsFrame.Size = UDim2.new(1, -20, 1, -45)
 settingsFrame.Position = UDim2.new(0, 10, 0, 45)
 settingsFrame.BackgroundTransparency = 1
+settingsFrame.ScrollBarThickness = 3
+settingsFrame.ScrollingEnabled = true
+settingsFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+settingsFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 settingsFrame.Visible = false
 settingsFrame.Parent = mainFrame
 
@@ -500,7 +623,7 @@ settingsListLayout.Parent = settingsFrame
 
 local function createSettingToggle(labelText, defaultState, callback)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 38)
+    btn.Size = UDim2.new(1, -5, 0, 38)
     btn.BackgroundColor3 = defaultState and Color3.fromRGB(40, 110, 60) or Color3.fromRGB(110, 40, 40)
     btn.Text = labelText .. ": " .. (defaultState and "ON" or "OFF")
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -532,6 +655,10 @@ end)
 
 updateWarningsUI = createSettingToggle("Option B: Warnings", true, function(state, isManual)
     warningsEnabled = state
+    if not state then
+        table.clear(entitySpawnHistory)
+        table.clear(lastSpamWarningTime)
+    end
     if isManual then triggerBickerLine(state and "WarningsOn" or "WarningsOff") end
 end)
 
@@ -540,10 +667,20 @@ updateTimestampsUI = createSettingToggle("Option C: Timestamps", true, function(
     if isManual then triggerBickerLine(state and "TimestampsOn" or "TimestampsOff") end
 end)
 
+updateDeathReviveUI = createSettingToggle("Option D: Death/Revive", true, function(state, isManual)
+    deathReviveEnabled = state
+    if isManual then triggerBickerLine(state and "DeathReviveOn" or "DeathReviveOff") end
+end)
+
+updateTeleportUI = createSettingToggle("Option E: Teleport React", true, function(state, isManual)
+    teleportMessagesEnabled = state
+    if isManual then triggerBickerLine(state and "TeleportOn" or "TeleportOff") end
+end)
+
 local keybindBtn = Instance.new("TextButton")
-keybindBtn.Size = UDim2.new(1, 0, 0, 38)
+keybindBtn.Size = UDim2.new(1, -5, 0, 38)
 keybindBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-keybindBtn.Text = "Option D: Menu Keybind [" .. menuKeybind.Name .. "]"
+keybindBtn.Text = "Option F: Menu Keybind [" .. menuKeybind.Name .. "]"
 keybindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 keybindBtn.Font = Enum.Font.Gotham
 keybindBtn.TextSize = 13
@@ -552,7 +689,7 @@ Instance.new("UICorner", keybindBtn).CornerRadius = UDim.new(0, 6)
 
 table.insert(connections, keybindBtn.MouseButton1Click:Connect(function()
     isBindingKey = true
-    keybindBtn.Text = "Option D: Press any key..."
+    keybindBtn.Text = "Option F: Press any key..."
     keybindBtn.BackgroundColor3 = Color3.fromRGB(150, 100, 30)
 end))
 
@@ -611,7 +748,6 @@ local function updateDynamicSize()
     local totalHeight = 55 + contentHeight
     local boundedHeight = math.min(totalHeight, MAX_MENU_HEIGHT)
     
-    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, contentHeight)
     resizeMenu(boundedHeight)
 end
 
@@ -650,7 +786,7 @@ function loadBranch(branchName)
 
     if branchName ~= "Main" then
         local backBtn = Instance.new("TextButton")
-        backBtn.Size = UDim2.new(1, 0, 0, 30)
+        backBtn.Size = UDim2.new(1, -5, 0, 30)
         backBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         backBtn.Text = "< Back"
         backBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -664,7 +800,7 @@ function loadBranch(branchName)
 
     for _, info in ipairs(branchData) do
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, 0, 0, 35)
+        btn.Size = UDim2.new(1, -5, 0, 35)
         btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
         btn.Text = info.name
         btn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -690,7 +826,7 @@ function loadBranch(branchName)
 end
 
 -- ==========================================
--- AUTOMATED ENTITY CALLOUTS
+-- AUTOMATED ENTITY CALLOUTS & MULTI-SPAM DETECTOR
 -- ==========================================
 local entityKeywords = {
     {"pinkimonium", "Pandemonium"}, {"ridgepandemonium", "Pandemonium"},
@@ -698,38 +834,79 @@ local entityKeywords = {
     {"pandesmoker", "Pandemonium"}, {"blitzmonium", "Pandemonium"},
     {"monium", "Pandemonium"}, {"pandemonium", "Pandemonium"},
     {"angler", "Angler"}, {"froger", "Frogger"}, {"frogger", "Frogger"},
-    {"blitz", "Blitz"}, {"chain", "Chainsmoker"}, {"chainsmoker", "Chainsmoker"},
+    {"blitz", "Blitz"}, {"chain", "Chainsmokeys"}, {"chainsmoker", "Chainsmokeys"}, {"chainsmokey", "Chainsmokeys"},
     {"pinkie", "Pinkie"}, 
-    {"eyefestation", "Eyefestation"}, {"eyefest", "Eyefestation"}, {"eye", "Eyefestation"},
+    {"eyefestation", "Eyefestation"}, {"eyefest", "Eyefestation"}, {"eye", "Eyefestation"}, 
+    {"eyefesthurt", "Eyefestation"}, {"eyefestationcameraeffect", "Eyefestation"}, 
+    {"eyefestveins", "Eyefestation"}, {"eyefestcircle", "Eyefestation"},
+    {"divineroot", "Wall Dweller"}, {"di-vine-root", "Wall Dweller"},
     {"dweller", "Wall Dweller"}, {"walldweller", "Wall Dweller"}, 
-    {"pipsqueak", "Special"}, {"a60", "Special"}, {"a120", "Special"}, {"bleach", "Special"}
+    {"dwellermodel", "Wall Dweller"}, {"dwellerspooked", "Wall Dweller"}, {"spooked", "Wall Dweller"},
+    {"pipsqueak", "Special"}, {"pipsqeuak", "Special"}, {"a60", "Special"}, {"bleach", "Special"}, {"a200", "Special"}
 }
 
-local function getEntityCallout(entityName)
-    local targetCategory = nil
-    local lowerEntityName = string.lower(entityName)
+local function onEntitySpawned(child)
+    if not isScriptActive or not isAlive or not warningsEnabled then return end
     
+    local lowerName = string.lower(child.Name)
+    local now = os.clock()
+
+    -- Explicit cooldowns for Eyefestation & Wall Dweller
+    if lowerName:find("eyefest") or lowerName:find("eyefestation") then
+        if now - lastEyefestCalloutTime < 30 then return end
+        lastEyefestCalloutTime = now
+    end
+
+    if lowerName:find("divineroot") or lowerName:find("dweller") or lowerName:find("spooked") or lowerName:find("bookshelf") then
+        if now - lastDivinerootCalloutTime < 15 then return end
+        lastDivinerootCalloutTime = now
+    end
+
+    -- Identify Entity Category
+    local targetCategory = nil
     for _, mapping in ipairs(entityKeywords) do
-        if string.find(lowerEntityName, mapping[1]) then
+        if string.find(lowerName, mapping[1]) then
             targetCategory = mapping[2]
             break
         end
     end
 
-    if not targetCategory then return nil end
+    if not targetCategory then return end
 
-    for _, item in ipairs(callouts.ENTITY) do
-        if item.name == targetCategory and item.messages then
-            return getRandomMessage(item.messages, "AUTO_" .. targetCategory)
+    -- Manage Entity Spawn History for Multi-Spawn Detection
+    if not entitySpawnHistory[targetCategory] then
+        entitySpawnHistory[targetCategory] = {}
+    end
+
+    local history = entitySpawnHistory[targetCategory]
+    
+    -- Clean timestamps older than the spam window (8 seconds)
+    for i = #history, 1, -1 do
+        if now - history[i] > SPAM_TIME_WINDOW then
+            table.remove(history, i)
         end
     end
-    return nil
-end
-
-local function onEntitySpawned(child)
-    if not isScriptActive or not isAlive or not warningsEnabled then return end
     
-    local rawMsg = getEntityCallout(child.Name)
+    table.insert(history, now)
+
+    -- Determine whether to output standard warning or multi-spawn reaction
+    local rawMsg = nil
+    local lastSpam = lastSpamWarningTime[targetCategory] or 0
+
+    if #history > SPAM_THRESHOLD and (now - lastSpam >= SPAM_COOLDOWN) then
+        lastSpamWarningTime[targetCategory] = now
+        local template = getRandomMessage(spamMessages, "AUTO_SPAM")
+        local pluralName = entityPlurals[targetCategory] or (targetCategory .. "s")
+        rawMsg = string.format(template, pluralName)
+    else
+        for _, item in ipairs(callouts.ENTITY) do
+            if item.name == targetCategory and item.messages then
+                rawMsg = getRandomMessage(item.messages, "AUTO_" .. targetCategory)
+                break
+            end
+        end
+    end
+
     if rawMsg then
         if not rawMsg:match("[!?%.]$") then rawMsg = rawMsg .. "." end
         sendChatMessage("[Warning] " .. rawMsg)
@@ -737,6 +914,28 @@ local function onEntitySpawned(child)
 end
 
 table.insert(connections, workspace.ChildAdded:Connect(onEntitySpawned))
+
+task.defer(function()
+    local camera = workspace:WaitForChild("Camera", 10)
+    if not isScriptActive or not camera then return end
+
+    local function checkCameraChild(child)
+        if not isScriptActive then return end
+        local name = string.lower(child.Name)
+        if name:find("eyefestation") or name:find("eyefest") then
+            onEntitySpawned(child)
+        end
+    end
+
+    for _, child in ipairs(camera:GetChildren()) do
+        task.defer(function() checkCameraChild(child) end)
+    end
+
+    table.insert(connections, camera.ChildAdded:Connect(function(child)
+        checkCameraChild(child)
+        table.insert(connections, child.DescendantAdded:Connect(checkCameraChild))
+    end))
+end)
 
 task.defer(function()
     local gameplayFolder = workspace:WaitForChild("GameplayFolder", 10)
@@ -756,26 +955,30 @@ task.defer(function()
     local roomsFolder = workspace:WaitForChild("Rooms", 10)
     if not isScriptActive or not roomsFolder then return end
     
-    local function checkRoomForEyefestation(room)
+    local function checkRoomForEntities(room)
         if not isScriptActive then return end
         for _, d in ipairs(room:GetDescendants()) do
-            if d.Name == "EyefestationSpawn" then onEntitySpawned(d) end
+            local name = string.lower(d.Name)
+            if name:find("eyefest") or name:find("eyefestation") or name:find("dweller") or name:find("bookshelf") or name:find("rotten") or name:find("spooked") or name:find("divineroot") then 
+                onEntitySpawned(d) 
+            end
         end
         
-        -- Direct connection without global table insert to prevent memory leaks 
-        -- Roblox GC handles this when the room is destroyed.
-        room.DescendantAdded:Connect(function(d)
-            if d.Name == "EyefestationSpawn" then onEntitySpawned(d) end
-        end)
-    end
+        table.insert(connections, room.DescendantAdded:Connect(function(d)
+            local name = string.lower(d.Name)
+            if name:find("eyefest") or name:find("eyefestation") or name:find("dweller") or name:find("bookshelf") or name:find("rotten") or name:find("spooked") or name:find("divineroot") then 
+                onEntitySpawned(d) 
+            end
+        end))
+    end -- Properly closed checkRoomForEntities
 
     for _, room in ipairs(roomsFolder:GetChildren()) do
-        task.defer(function() checkRoomForEyefestation(room) end)
+        task.defer(function() checkRoomForEntities(room) end)
     end
     
     table.insert(connections, roomsFolder.ChildAdded:Connect(function(room)
         task.wait(0.1)
-        if isScriptActive then checkRoomForEyefestation(room) end
+        if isScriptActive then checkRoomForEntities(room) end
     end))
 end)
 
@@ -793,7 +996,7 @@ task.spawn(function()
             sendChatMessage(entry.prefix .. " " .. entry.text)
         end
 
-        local waitTime = math.random(30, 60)
+        local waitTime = math.random(60, 120)
         task.wait(waitTime)
     end
 end)
@@ -915,23 +1118,23 @@ table.insert(connections, yesBtn.MouseButton1Click:Connect(function()
     ambienceEnabled = false
     warningsEnabled = false
     timestampsEnabled = false
+    deathReviveEnabled = false
+    teleportMessagesEnabled = false
     
     clearBranchConnections()
 
-    -- Disconnect global connections
     for _, conn in ipairs(connections) do
         if conn.Connected then conn:Disconnect() end
     end
     table.clear(connections)
     
-    -- Disconnect character-specific connections
     for _, conn in ipairs(charConnections) do
         if conn.Connected then conn:Disconnect() end
     end
     table.clear(charConnections)
     
     if screenGui then screenGui:Destroy() end
-    script:Destroy()
+    if script then script:Destroy() end
 end))
 
 table.insert(connections, noBtn.MouseButton1Click:Connect(function()
@@ -947,7 +1150,7 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, ga
         if input.UserInputType == Enum.UserInputType.Keyboard then
             menuKeybind = input.KeyCode
             isBindingKey = false
-            keybindBtn.Text = "Option D: Menu Keybind [" .. menuKeybind.Name .. "]"
+            keybindBtn.Text = "Option F: Menu Keybind [" .. menuKeybind.Name .. "]"
             keybindBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
         end
         return
@@ -959,7 +1162,6 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, ga
     end
 end))
 
--- Initialization
 loadBranch("Main")
 
 -- ==========================================
@@ -977,7 +1179,7 @@ task.spawn(function()
     task.wait(1.5) 
     
     if isScriptActive then
-        local randomIntro = introMessages[math.random(1, #introMessages)]
+        local randomIntro = getRandomMessage(introMessages, "INTRO")
         sendChatMessage('[Intro] "' .. randomIntro .. '"')
     end
 end)
