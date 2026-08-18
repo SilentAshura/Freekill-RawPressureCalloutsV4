@@ -39,6 +39,9 @@ local lastSpamWarningTime = {}
 local SPAM_TIME_WINDOW = 8
 local SPAM_THRESHOLD = 3
 local SPAM_COOLDOWN = 10
+local lastPandeCalloutTime = 0
+local PANDE_COOLDOWN = 2.5 
+local processedInstances = setmetatable({}, {__mode = "k"})
 local entityPlurals = {
     ["Angler"] = "Anglers",
     ["Froger"] = "Frogers",
@@ -1076,63 +1079,81 @@ local entityKeywords = {
     {"deathangel", "DeathAngel"}, {"harbinger", "DeathAngel"}, {"mirage", "Mirage"}, {"carnation", "Special"}
 }
 local function onEntitySpawned(child)
-    if not isScriptActive or not isAlive or not warningsEnabled then return end 
-    local lowerName = string.lower(child.Name)
-    local now = os.clock()
-    if lowerName:find("eyefest") or lowerName:find("eyefestation") then
-        if now - lastEyefestCalloutTime < 30 then return end
-        lastEyefestCalloutTime = now
+    if not isScriptActive or not isAlive or not warningsEnabled then return end  
+    
+    -- 1. Discard if this exact sub-object/instance was already processed
+    if processedInstances[child] then return end
+    processedInstances[child] = true
+
+    local lowerName = string.lower(child.Name) 
+    local now = os.clock() 
+
+    -- 2. Dedicated Entity Cooldown Checks
+    if lowerName:find("eyefest") or lowerName:find("eyefestation") then 
+        if now - lastEyefestCalloutTime < 30 then return end 
+        lastEyefestCalloutTime = now 
+    elseif lowerName:find("divineroot") or lowerName:find("dweller") then 
+        if now - lastDivinerootCalloutTime < 15 then return end 
+        lastDivinerootCalloutTime = now 
+    elseif lowerName:find("pande") or lowerName:find("monium") then
+        if now - lastPandeCalloutTime < PANDE_COOLDOWN then return end
+        lastPandeCalloutTime = now
     end
-    if lowerName:find("divineroot") or lowerName:find("dweller") then
-        if now - lastDivinerootCalloutTime < 15 then return end
-        lastDivinerootCalloutTime = now
-    end
+
+    -- 3. Resolve Entity Category (Angler, Pandemonium, Anglemonium, etc.)
     local targetCategory = nil
-    for _, mapping in ipairs(entityKeywords) do
-        if string.find(lowerName, mapping[1]) then
-            targetCategory = mapping[2]
+    for _, mapping in ipairs(entityKeywords) do 
+        if string.find(lowerName, mapping[1]) then 
+            targetCategory = mapping[2] 
             break
         end
     end
     if not targetCategory then return end
-    if not entitySpawnHistory[targetCategory] then
-        entitySpawnHistory[targetCategory] = {}
+
+    -- 4. Anti-Spam Tracking & Callout Logic
+    if not entitySpawnHistory[targetCategory] then 
+        entitySpawnHistory[targetCategory] = {} 
     end
     local history = entitySpawnHistory[targetCategory]  
-    for i = #history, 1, -1 do
-        if now - history[i] > SPAM_TIME_WINDOW then
-            table.remove(history, i)
+    
+    for i = #history, 1, -1 do 
+        if now - history[i] > SPAM_TIME_WINDOW then 
+            table.remove(history, i) 
         end
     end
-    table.insert(history, now)
+    table.insert(history, now) 
+
     local rawMsg = nil
-    local lastSpam = lastSpamWarningTime[targetCategory] or 0
-    if #history > SPAM_THRESHOLD then
-        if now - lastSpam >= SPAM_COOLDOWN then
-            lastSpamWarningTime[targetCategory] = now
-            local template = getRandomMessage(spamMessages, "AUTO_SPAM")
-            local pluralName = entityPlurals[targetCategory] or (targetCategory .. "s")
-            rawMsg = string.format(template, pluralName)
+    local lastSpam = lastSpamWarningTime[targetCategory] or 0 
+    
+    if #history > SPAM_THRESHOLD then 
+        if now - lastSpam >= SPAM_COOLDOWN then 
+            lastSpamWarningTime[targetCategory] = now 
+            local template = getRandomMessage(spamMessages, "AUTO_SPAM") 
+            local pluralName = entityPlurals[targetCategory] or (targetCategory .. "s") 
+            rawMsg = string.format(template, pluralName) 
         else
             return 
         end
     else
-        local searchCategories = {callouts.ENTITY, callouts.OTHERNODES, callouts.PANDEMONIUMVARIANTS}
-        for _, category in ipairs(searchCategories) do
-            for _, item in ipairs(category) do
-                if item.name == targetCategory and item.messages then
-                    rawMsg = getRandomMessage(item.messages, "AUTO_" .. targetCategory)
+        local searchCategories = {callouts.ENTITY, callouts.OTHERNODES, callouts.PANDEMONIUMVARIANTS} 
+        for _, category in ipairs(searchCategories) do 
+            for _, item in ipairs(category) do 
+                if item.name == targetCategory and item.messages then 
+                    rawMsg = getRandomMessage(item.messages, "AUTO_" .. targetCategory) 
                     break
                 end
             end
-            if rawMsg then break end
+            if rawMsg then break end 
         end
     end
-    if rawMsg then
-        if not rawMsg:match("[!?%.]$") then rawMsg = rawMsg .. "." end
-        sendChatMessage("[Warning] " .. rawMsg)
+
+    if rawMsg then 
+        if not rawMsg:match("[!?%.]$") then rawMsg = rawMsg .. "." end 
+        sendChatMessage("[Warning] " .. rawMsg) 
     end
 end
+
 table.insert(connections, workspace.ChildAdded:Connect(onEntitySpawned))
 task.defer(function()
     local camera = workspace:WaitForChild("Camera", 10)
