@@ -1369,7 +1369,22 @@ local introMessages = {
     "Let’s remember why we’re here. Whatever happens, the objective comes first.",
     "Keep your eyes open. I’d rather not find out what’s waiting for us the hard way.",
     "If this place goes quiet, don’t assume that means we’re safe.",
-    "Alright… let’s get what we came for. Hopefully, this isn’t the last thing we ever do."
+    "Alright… let’s get what we came for. Hopefully, this isn’t the last thing we ever do.",
+    "Everything about this place feels wrong. Let’s just keep moving.",
+    "Stay close. Getting separated down here sounds like a very bad way to die.",
+    "I don’t like how little we know about what’s down here.",
+    "Remember, we’re visitors. Whatever lurks here probably doesn’t care.",
+    "Watch the dark. Something this deep doesn’t stay empty for long.",
+    "I’m starting to understand why they needed people desperate enough to come here.",
+    "Keep moving. Standing around in a place like this feels like asking for trouble.",
+    "If you hear something behind us, make sure it’s actually one of us.",
+    "We came all this way for one thing. Let’s not lose our lives over anything else.",
+    "The deeper we go, the less I like our chances of making it back.",
+    "Try not to think about how much water is sitting above us.",
+    "Something tells me this place has taken more lives than it ever gave back.",
+    "Whatever is waiting ahead, I doubt it’s going to let us pass peacefully.",
+    "If we stop hearing from each other, assume the worst and keep the objective moving.",
+    "Let’s finish this quickly. I’d rather not become another story this place never tells."
 }
 task.spawn(function()
     task.wait(1.5)    
